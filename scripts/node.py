@@ -64,10 +64,15 @@ class image_feature:
         # publish new image
         self.image_pub.publish(msg)
 
+def myhook():
+    print "shutdown time!"
+
 def main(args):
     ic = image_feature()
     rospy.init_node('image_feature',anonymous=True)
+    rospy.on_shutdown(myhook)
     try:
+        # while not rospy.is_shutdown():
         rospy.spin()
     except KeyboardInterrupt:
         print 'Shutting down ROS Image feature detector module'
