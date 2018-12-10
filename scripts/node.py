@@ -19,8 +19,9 @@ class image_feature:
         self.image_pub = rospy.Publisher('ouput/image_raw/compressed',CompressedImage,queue_size=1)
 
         self.subscriber = rospy.Subscriber('/Team1_image/compressed',CompressedImage,self.callback,queue_size=1)
-    if VERBOSE:
-        print("subscribed to /camera/image/compressed")
+
+        if VERBOSE:
+            print("subscribed to /Team1_image/compressed")
 
     def callback(self,ros_data):
         # if VERBOSE:
