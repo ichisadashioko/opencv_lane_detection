@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-cap = cv2.VideoCapture('/home/shioko/Videos/20181211_110224.avi')
+cap = cv2.VideoCapture('sample.avi')
 
 def birdview(img,shrink_ratio):
     height,width = img.shape[:2]
@@ -25,8 +25,9 @@ while(cap.isOpened()):
 
     gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
 
-    for i in range(5):
-        ratio = (i)/10.0
+    for i in range(10):
+        # ratio = (i)/10.0
+        ratio = i*0.05
         bird_view = birdview(frame,ratio)
         cv2.imshow('{}%'.format(int(ratio*100)),bird_view)
 
