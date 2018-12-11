@@ -15,7 +15,7 @@ usr = os.path.expanduser('~') # type str
 path = os.path.join(usr,'Videos')
 
 now = datetime.now()
-timestamp = '{}{}{}{}{}{}'.format(str(now.year).zfill(4),str(now.month).zfill(2),str(now.day).zfill(2),str(now.hour).zfill(2),str(now.minute).zfill(2),str(now.second).zfill(2))
+timestamp = '{}{}{}_{}{}{}'.format(str(now.year).zfill(4),str(now.month).zfill(2),str(now.day).zfill(2),str(now.hour).zfill(2),str(now.minute).zfill(2),str(now.second).zfill(2))
 
 file_name = os.path.join(path,timestamp + '.avi')
 
