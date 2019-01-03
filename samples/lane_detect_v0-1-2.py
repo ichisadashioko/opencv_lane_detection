@@ -8,38 +8,47 @@ def get_hist(img):
     return hist
 
 
-def birdview(img, shrink_ratio):
+def get_bird_view(img, shrink_ratio,dsize=(480,320)):
     height, width = img.shape[:2]
     SKYLINE = int(height*0.55)
 
     roi = img.copy()
     cv2.rectangle(roi, (0, 0), (width, SKYLINE), 0, -1)
 
-    src_pts = np.float32([[0, SKYLINE], [width, SKYLINE],
-                          [0, height], [width, height]])
+    dst_width,dst_height = dsize
 
-    dst_width = 320
-    dst_height = 320
-    dsize = (dst_width, dst_height)
-
-    dst_pts = np.float32([[0, 0], [dst_width, 0], [
-                         dst_width*shrink_ratio, dst_height], [dst_width*(1-shrink_ratio), dst_height]])
-
+    src_pts = np.float32([[0, SKYLINE], [width, SKYLINE], [0, height], [width, height]])
+    dst_pts = np.float32([[0, 0], [dst_width, 0], [dst_width*shrink_ratio, dst_height], [dst_width*(1-shrink_ratio), dst_height]])
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
     dst = cv2.warpPerspective(roi, M, dsize)
 
     return dst
 
+def inv_bird_view(img,stretch_ratio,dsize=(320,240)):
+    height, width = img.shape[:2]
 
-left_a, left_b, left_c = [], [], []
-right_a, right_b, right_c = [], [], []
+    dst_width,dst_height = dsize
+
+    SKYLINE = int(dst_height*0.55)
+
+    src_pts = np.float32([[0,0],[width,0],[width*stretch_ratio,height],[width*(1-stretch_ratio),height]])
+    dst_pts = np.float32([[0,SKYLINE],[dst_width,SKYLINE],[0,dst_height],[dst_width,dst_height]])
+    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
+
+    dst = cv2.warpPerspective(img, M, dsize)
+
+    return dst
+
+# x = ay + b
+left_a, left_b = [], []
+right_a, right_b = [], []
 
 
-def sliding_window(img, nwindows=9, margin=20, minpix=1, draw_windows=True, left_color=(0, 0, 255), right_color=(0, 255, 0), thickness=1):
+def sliding_window(img, nwindows=16, margin=20, minpix=1, draw_windows=True, left_color=(0, 0, 255), right_color=(0, 255, 0), thickness=1):
     global left_a, left_b, left_c, right_a, right_b, right_c
-    left_fit_ = np.empty(3)
-    right_fit_ = np.empty(3)
+    left_fit_ = np.empty(2)
+    right_fit_ = np.empty(2)
     # I haven't understood this line of code
     out_img = np.dstack((img, img, img))*255
 
@@ -105,44 +114,34 @@ def sliding_window(img, nwindows=9, margin=20, minpix=1, draw_windows=True, left
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds]
 
-    '''
-    Will be replace with line fit for simplicity
-    '''
-    # fit a second order polynomial to each
     if len(leftx) == 0 or len(lefty) == 0:
-        left_fit = np.array([0, 0, 0])
+        left_fit = np.array([0, 0])
     else:
-        left_fit = np.polyfit(lefty, leftx, 2)
+        left_fit = np.polyfit(lefty, leftx, 1)
 
     if len(rightx) == 0 or len(righty) == 0:
-        right_fit = np.array([0, 0, 0])
+        right_fit = np.array([0, 0])
     else:
-        right_fit = np.polyfit(rightx, righty, 2)
+        right_fit = np.polyfit(righty, rightx, 1)
 
     left_a.append(left_fit[0])
     left_b.append(left_fit[1])
-    left_c.append(left_fit[2])
 
     right_a.append(right_fit[0])
     right_b.append(right_fit[1])
-    right_c.append(right_fit[2])
 
     left_fit_[0] = np.mean(left_a[-10:])  # ???
     left_fit_[1] = np.mean(left_b[-10:])  # ???
-    left_fit_[2] = np.mean(left_c[-10:])
 
     right_fit_[0] = np.mean(right_a[-10:])
     right_fit_[1] = np.mean(right_b[-10:])
-    right_fit_[2] = np.mean(right_c[-10:])
 
-    # generate x and y values for plotting
-    ploty = np.linspace(0, img.shape[0]-1, img.shape[0])
-    left_fitx = left_fit_[0]*ploty**2 + left_fit_[1] * \
-        ploty + left_fit_[2]  # y = ax**2 + bx + c
-    right_fitx = right_fit_[0]*ploty**2 + right_fit_[1]*ploty + right_fit_[2]
+    # generate x and y values for plotting (x = ay + b => y = (x - b) / a)
+    plotx = np.linspace(0, img.shape[1]-1, img.shape[1])
+    left_fity = (plotx - left_fit_[1]) / left_fit_[0]
+    right_fity = (plotx - right_fit_[1]) / right_fit_[0]
 
-    return out_img, (left_fitx, right_fitx), (left_fit_, right_fit_), ploty
-
+    return out_img, (left_fity, right_fity), (left_fit_, right_fit_), plotx
 
 def callback(ros_data):
     img = ros_data
@@ -167,16 +166,17 @@ def callback(ros_data):
     l_ret, l_thresh = cv2.threshold(abs_sobel, 75, 255, cv2.THRESH_BINARY)
 
     ratio = 0.3  # shrink the bottom by 30%
-    bird_view = birdview(l_thresh, ratio)
+    bird_view = get_bird_view(l_thresh, ratio)
     label = '{}% threshed lightness sky view'.format(int(ratio*100))
     cv2.imshow(label, bird_view)
 
-    bird_view = bird_view.astype(np.uint8)
+    inv = inv_bird_view(bird_view, ratio)
+    cv2.imshow('inverse bird view',inv)
 
     s_window, (left_fitx, right_fitx), (left_fit_, right_fit_), ploty = sliding_window(bird_view)
-
     cv2.imshow('sliding windows', s_window)
 
+    
 
 cap = cv2.VideoCapture('sample_x4.avi')
 
