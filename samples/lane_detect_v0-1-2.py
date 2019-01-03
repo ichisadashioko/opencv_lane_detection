@@ -46,7 +46,7 @@ right_a, right_b = [], []
 
 
 def sliding_window(img, nwindows=16, margin=20, minpix=1, draw_windows=True, left_color=(0, 0, 255), right_color=(0, 255, 0), thickness=1):
-    global left_a, left_b, left_c, right_a, right_b, right_c
+    global left_a, left_b, right_a, right_b
     left_fit_ = np.empty(2)
     right_fit_ = np.empty(2)
     # I haven't understood this line of code
