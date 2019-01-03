@@ -1,7 +1,6 @@
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-import random
 
 
 def get_hist(img):
@@ -147,6 +146,7 @@ def sliding_window(img, nwindows=9, margin=20, minpix=1, draw_windows=True, left
 
 def callback(ros_data):
     img = ros_data
+    cv2.imshow('frame',img)
 
     roi = img.copy()
 
@@ -164,33 +164,7 @@ def callback(ros_data):
     # sobel = cv2.Laplacian(l_channel,cv2.CV_64F)
     abs_sobel = np.absolute(sobel)  # absolute all negative gradient values
 
-    # debug
-    print(np.unique(abs_sobel))
-    # cv2.imshow('abs_sobel', abs_sobel)
-
     l_ret, l_thresh = cv2.threshold(abs_sobel, 75, 255, cv2.THRESH_BINARY)
-
-    ''' 
-    ## debug
-    # print(type(l_thresh)) # 'numpy.ndarray'
-    # print(type(l_thresh[0])) # 'numpy.ndarray'
-    # print(type(l_thresh[0][0])) # 'numpy.float64'
-    # print(np.unique(l_thresh)) # [  0. 255.]
-
-    # l_thresh = l_thresh.astype(np.uint8)
-    # print(type(l_thresh[0][0])) # 'numpy.uint8'
-    # print(np.unique(l_thresh)) # [  0 255]
-
-    ## end debug
-    '''
-
-    ''' 
-    ## unused code
-    # threshold saturation channel
-    # s_sobel = cv2.Sobel(s_channel, cv2.CV_64F, 1, 1)
-    # abs_s_sobel = np.absolute(s_sobel)
-    # s_ret, s_thresh = cv2.threshold(abs_s_sobel, 50, 255, cv2.THRESH_BINARY)
-    '''
 
     ratio = 0.3  # shrink the bottom by 30%
     bird_view = birdview(l_thresh, ratio)
@@ -199,22 +173,9 @@ def callback(ros_data):
 
     bird_view = bird_view.astype(np.uint8)
 
-    s_window, (left_fitx, right_fitx), (left_fit_,
-                                        right_fit_), ploty = sliding_window(bird_view)
+    s_window, (left_fitx, right_fitx), (left_fit_, right_fit_), ploty = sliding_window(bird_view)
 
     cv2.imshow('sliding windows', s_window)
-
-    # lines = cv2.HoughLinesP(bird_view, 1, np.pi/180, 50,
-    #                         minLineLength=60, maxLineGap=50)
-
-    # canvas = np.zeros_like(bird_view)
-
-    # canvas = cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
-
-    # canvas = draw_lines(canvas, lines)
-    # cv2.imshow('canvas', canvas)
-
-    return bird_view
 
 
 cap = cv2.VideoCapture('sample_x4.avi')
@@ -224,7 +185,7 @@ while(cap.isOpened()):
     if not ret:
         break
 
-    bird_view = callback(frame)
+    callback(frame)
 
     k = cv2.waitKey(25)
     if k & 0xff == ord('p'):
