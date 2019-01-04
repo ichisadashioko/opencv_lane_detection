@@ -2,48 +2,52 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 
+# x = ay + b
+left_a, left_b = [], []
+right_a, right_b = [], []
+
 
 def get_hist(img):
     hist = np.sum(img, axis=0)
     return hist
 
 
-def get_bird_view(img, shrink_ratio,dsize=(480,320)):
+def get_bird_view(img, shrink_ratio, dsize=(480, 320)):
     height, width = img.shape[:2]
     SKYLINE = int(height*0.55)
 
     roi = img.copy()
     cv2.rectangle(roi, (0, 0), (width, SKYLINE), 0, -1)
 
-    dst_width,dst_height = dsize
+    dst_width, dst_height = dsize
 
-    src_pts = np.float32([[0, SKYLINE], [width, SKYLINE], [0, height], [width, height]])
-    dst_pts = np.float32([[0, 0], [dst_width, 0], [dst_width*shrink_ratio, dst_height], [dst_width*(1-shrink_ratio), dst_height]])
+    src_pts = np.float32([[0, SKYLINE], [width, SKYLINE], [
+        0, height], [width, height]])
+    dst_pts = np.float32([[0, 0], [dst_width, 0], [
+        dst_width*shrink_ratio, dst_height], [dst_width*(1-shrink_ratio), dst_height]])
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
     dst = cv2.warpPerspective(roi, M, dsize)
 
     return dst
 
-def inv_bird_view(img,stretch_ratio,dsize=(320,240)):
+
+def inv_bird_view(img, stretch_ratio, dsize=(320, 240)):
     height, width = img.shape[:2]
 
-    dst_width,dst_height = dsize
+    dst_width, dst_height = dsize
 
     SKYLINE = int(dst_height*0.55)
 
-    src_pts = np.float32([[0,0],[width,0],[width*stretch_ratio,height],[width*(1-stretch_ratio),height]])
-    dst_pts = np.float32([[0,SKYLINE],[dst_width,SKYLINE],[0,dst_height],[dst_width,dst_height]])
+    src_pts = np.float32([[0, 0], [width, 0], [
+        width*stretch_ratio, height], [width*(1-stretch_ratio), height]])
+    dst_pts = np.float32([[0, SKYLINE], [dst_width, SKYLINE], [
+        0, dst_height], [dst_width, dst_height]])
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
     dst = cv2.warpPerspective(img, M, dsize)
 
     return dst
-
-# x = ay + b
-left_a, left_b = [], []
-right_a, right_b = [], []
-
 
 def sliding_window(img, nwindows=16, margin=20, minpix=1, draw_windows=True, left_color=(0, 0, 255), right_color=(0, 255, 0), thickness=1):
     global left_a, left_b, right_a, right_b
@@ -136,16 +140,33 @@ def sliding_window(img, nwindows=16, margin=20, minpix=1, draw_windows=True, lef
     right_fit_[0] = np.mean(right_a[-10:])
     right_fit_[1] = np.mean(right_b[-10:])
 
-    # generate x and y values for plotting (x = ay + b => y = (x - b) / a)
-    plotx = np.linspace(0, img.shape[1]-1, img.shape[1])
-    left_fity = (plotx - left_fit_[1]) / left_fit_[0]
-    right_fity = (plotx - right_fit_[1]) / right_fit_[0]
+    
+    ploty = np.linspace(0, img.shape[0]-1, img.shape[0])
+    
+    left_fitx = left_fit_[0]*ploty + left_fit_[1]
+    right_fitx = right_fit_[0] * ploty + right_fit_[1]
 
-    return out_img, (left_fity, right_fity), (left_fit_, right_fit_), plotx
+    return out_img, (left_fitx, right_fitx), (left_fit_, right_fit_), ploty
+
+def draw_lines(src_img, plot_dsize, leftx_pts, rightx_pts, ploty, color=(255, 0, 0)):
+    stretch_ratio = 0.3
+    
+    color_image = np.zeros((plot_dsize[0],plot_dsize[1],3))
+
+    left = np.array([np.flipud(np.transpose(np.vstack([leftx_pts,ploty])))])
+    right = np.array([np.transpose(np.vstack([rightx_pts, ploty]))])
+    points = np.hstack((left, right))
+
+    cv2.fillPoly(color_image, np.int_(points), color)
+    inv = inv_bird_view(color_image, stretch_ratio)
+    retval = cv2.addWeighted(src_img.astype(np.uint8), 1, inv.astype(np.uint8), 1, 1)
+
+    return retval
+
 
 def callback(ros_data):
     img = ros_data
-    cv2.imshow('frame',img)
+    cv2.imshow('frame', img)
 
     roi = img.copy()
 
@@ -171,12 +192,17 @@ def callback(ros_data):
     cv2.imshow(label, bird_view)
 
     inv = inv_bird_view(bird_view, ratio)
-    cv2.imshow('inverse bird view',inv)
+    cv2.imshow('inverse bird view', inv)
 
-    s_window, (left_fitx, right_fitx), (left_fit_, right_fit_), ploty = sliding_window(bird_view)
+    s_window, (left_fity, right_fity), (left_fit_,
+                                        right_fit_), plotx = sliding_window(bird_view)
     cv2.imshow('sliding windows', s_window)
 
-    
+    draw_lane = draw_lines(
+        img, bird_view.shape[:2], left_fity, right_fity, plotx)
+
+    cv2.imshow('draw_lane', draw_lane)
+
 
 cap = cv2.VideoCapture('sample_x4.avi')
 
