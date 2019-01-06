@@ -6,14 +6,18 @@ import pandas as pd
 
 log_0 = np.array(pd.read_csv('log_00.txt')[:1000])
 log_1 = np.array(pd.read_csv('log_01.txt')[:1000])
-f = np.full((1000,1),1/60.0) # 60 Hz
+fps30 = np.full((1000,1),1/30.0)
+fps60 = fps30/2
+fps90 = fps30/3
 
-print('log_0: {}, log_1: {}, f: {}'.format(log_0.shape,log_1.shape,f.shape))
-y_max = max(np.vstack((log_0,log_1,f))) * 1.05
+y_max = max(np.vstack((log_0,log_1,fps30))) * 1.05
 # y_max = max(log_1) * 1.05
 
-plt.plot(log_0,label='none-process')
-plt.plot(log_1,label='process')
+plt.plot(log_0,label='decode_runtime')
+plt.plot(log_1,label='current_node_runtime')
+plt.plot(fps30,label='30Hz')
+plt.plot(fps60,label='60Hz')
+plt.plot(fps90,label='90Hz')
 
 plt.legend()
 
