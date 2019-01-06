@@ -5,7 +5,7 @@
 - [x] Histogram Peak Detection
 - [x] Sliding Window Search
 - [x] Curve Fitting
-- [ ] Overlay Detected Lane
+- [x] Overlay Detected Lane
 
 ## PID for control
 - [ ] Research
