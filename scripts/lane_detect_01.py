@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 # shebang (#!)
+from __future__ import print_function
 import sys
 import time
-# scipy is with with np and cv to handle conversions
-from scipy.ndimage import filters
 
 import cv2
 import numpy as np
@@ -12,6 +11,8 @@ import rospy
 import roslib
 
 from sensor_msgs.msg import CompressedImage
+import std_msgs
+from std_msgs.msg import Float32
 
 
 class Lane_Detect:
@@ -20,12 +21,22 @@ class Lane_Detect:
         self.ST = True  # software testing
         self.CODE = 'Team1' if self.ST else 'Team614'
         self.NAME = 'Stardust'
+
+        self.log = False
+
+        self.counter = 0 # counter for reducing the number of processed image
         # x = ay + b
         self.left_a, self.left_b = [], []
         self.right_a, self.right_b = [], []
 
         self.subscriber = rospy.Subscriber("/{}_image/compressed".format(self.CODE), CompressedImage, self.callback, queue_size=1)
-        # self.subscriber = rospy.Subscriber("/Team1_image/compressed", CompressedImage, self.callback, queue_size=1)
+
+        if self.log: # write log for runtime optimization
+            self.f = open('log_02.txt','w+')
+            self.f.write('start_time,\tpre_process,\tbird_view,\tsliding_windows,\tdraw_lane,\trun_time\n')
+
+        self.steer_angle = rospy.Publisher('{}_steerAngle'.format(self.CODE),Float32,queue_size=10)
+        self.speed = rospy.Publisher('{}_speed'.format(self.CODE),Float32,queue_size=10)
 
     def get_hist(self, img):
         hist = np.sum(img, axis=0)
@@ -183,59 +194,105 @@ class Lane_Detect:
 
         return retval
 
+    def get_desired_line(self, leftx, rightx, ys):
+        xs = np.mean(np.vstack((leftx, rightx)), axis=0)
+        line = np.polyfit(ys, xs, 1)
+        return line, xs, ys
+
     def callback(self, ros_data):
-        # decode image
-        np_arr = np.fromstring(ros_data.data, np.uint8)
-        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)  # OpenCV >= 3.0
-
         if self.ST:
-            print('[{}] RECEIVED IMAGE'.format(time.time()))
-            cv2.imshow('frame', img)
-            # print(img)
+            self.counter += 1
+            if self.counter % 2 == 0: # reduce half of images for processing
+                self.counter = 0
+                return
 
-        roi = img.copy()
+        delta_list = [] # hold runtime of diferent blocks
+        if self.ST:
+            timer1 = time.time()
+            # print('[{}] RECEIVED IMAGE'.format(timer1, end=' '))
+            delta_list.append(timer1)
 
-        height, width = roi.shape[:2]
-        cv2.rectangle(roi, (0, 0), (width, int(height*0.55)),
-                      0, -1)  # crop the image
+        # decode image
+        np_arr=np.fromstring(ros_data.data, np.uint8)
+        img=cv2.imdecode(np_arr, cv2.IMREAD_COLOR)  # OpenCV >= 3.0
 
-        hls = cv2.cvtColor(roi, cv2.COLOR_BGR2HLS)
-        h_channel = hls[:, :, 0]
-        l_channel = hls[:, :, 1]
-        s_channel = hls[:, :, 2]
+        roi=img.copy()
+
+        height, width=roi.shape[:2]
+        cv2.rectangle(roi, (0, 0), (width, int(height*0.55)),0, -1)  # crop the image
+
+        hls=cv2.cvtColor(roi, cv2.COLOR_BGR2HLS)
+        h_channel=hls[:, :, 0]
+        l_channel=hls[:, :, 1]
+        s_channel=hls[:, :, 2]
 
         # Sobel both x and y directions of lightness channel
-        sobel = cv2.Sobel(l_channel, cv2.CV_64F, 1, 1)
+        sobel=cv2.Sobel(l_channel, cv2.CV_64F, 1, 1)
         # sobel = cv2.Laplacian(l_channel,cv2.CV_64F)
-        abs_sobel = np.absolute(sobel)  # absolute all negative gradient values
+        abs_sobel=np.abs(sobel)  # absolute all negative gradient values
 
-        l_ret, l_thresh = cv2.threshold(abs_sobel, 75, 255, cv2.THRESH_BINARY)
+        l_ret, l_thresh=cv2.threshold(abs_sobel, 75, 255, cv2.THRESH_BINARY)
 
-        ratio = 0.3  # shrink the bottom by 30%
-        bird_view = self.get_bird_view(l_thresh, ratio)
-        label = '{}% threshed lightness sky view'.format(int(ratio*100))
         if self.ST:
-            cv2.imshow(label, bird_view)
+            pre_process_delta = time.time() - sum(delta_list)
+            delta_list.append(pre_process_delta)
 
-        inv = self.inv_bird_view(bird_view, ratio)
+        ratio=0.3  # shrink the bottom by 30%
+        bird_view=self.get_bird_view(l_thresh, ratio)
+
         if self.ST:
-            cv2.imshow('inverse bird view', inv)
+            bird_view_delta = time.time() - sum(delta_list)
+            delta_list.append(bird_view_delta)
 
         s_window, (left_fitx, right_fitx), (left_fit_,
-                                            right_fit_), ploty = self.sliding_window(bird_view)
+                                            right_fit_), ploty=self.sliding_window(bird_view)
+
         if self.ST:
+            slide_delta = time.time() - sum(delta_list)
+            delta_list.append(slide_delta)
+
+        if self.ST:
+            draw_lane=self.draw_lines(img, bird_view.shape[:2], left_fitx, right_fitx, ploty)
+
+            draw_lane_delta = time.time() - sum(delta_list)
+            delta_list.append(draw_lane_delta)
+
+            label='{}% threshed lightness sky view'.format(int(ratio*100))
+
+            cv2.imshow('frame', img)
+            cv2.imshow(label, bird_view)
             cv2.imshow('sliding windows', s_window)
+            cv2.imshow('draw_lane', draw_lane)
 
-        draw_lane = self.draw_lines(
-            img, bird_view.shape[:2], left_fitx, right_fitx, ploty)
 
-        cv2.imshow('draw_lane', draw_lane)
+        d_line, d_xs, d_ys=self.get_desired_line(left_fitx, right_fitx, ploty)
+
+        # take a look a jupyter notebook for explanation
+        top_delta = 240 - d_xs[0]
+        bot_delta = 240 - d_xs[len(d_xs) - 1]
+
+        # print('top_delta: {}, bot_delta: {}'.format(top_delta,bot_delta))
+        steer_delta = - (top_delta - bot_delta) / 10
+        print('steer_delta: ', steer_delta)
+        self.steer_angle.publish(steer_delta)
+        
+        if self.ST:
+            get_line_delta = time.time() - sum(delta_list)
+            delta_list.append(get_line_delta)
+
+        if self.ST:
+            timer2=time.time()
+            delta = timer2 - timer1
+
+            if self.log:
+                self.f.write('{},\t{},\t{},\t{},\t{},\t{}\n'.format(delta_list[0],delta_list[1],delta_list[2],delta_list[3],delta_list[4],timer2))
+            # print('callback takes {} sec'.format(delta))
 
         cv2.waitKey(2)
 
 
 def main(args):
-    lane_detect = Lane_Detect()
+    lane_detect=Lane_Detect()
     rospy.init_node('team_614_lane_detect', anonymous=True)
     try:
         rospy.spin()
