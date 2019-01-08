@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# shebang (#!)
 from __future__ import print_function
 import sys
 import time
@@ -22,15 +21,14 @@ class Lane_Detect:
         self.CODE = 'Team1' if self.ST else 'Team614'
         self.NAME = 'Stardust'
 
-        self.counter = 0 # counter for reducing the number of processed image
+        self.counter = 0  # counter for reducing the number of processed image
         # x = ay + b
         self.left_a, self.left_b = [], []
         self.right_a, self.right_b = [], []
 
         self.subscriber = rospy.Subscriber("/{}_image/compressed".format(self.CODE), CompressedImage, self.callback, queue_size=1)
-
-        self.steer_angle = rospy.Publisher('{}_steerAngle'.format(self.CODE),Float32,queue_size=10)
-        self.speed = rospy.Publisher('{}_speed'.format(self.CODE),Float32,queue_size=10)
+        self.steer_angle = rospy.Publisher('{}_steerAngle'.format(self.CODE), Float32, queue_size=1)
+        self.speed_pub = rospy.Publisher('{}_speed'.format(self.CODE), Float32, queue_size=1)
 
     def get_hist(self, img):
         hist = np.sum(img, axis=0)
@@ -45,10 +43,8 @@ class Lane_Detect:
 
         dst_width, dst_height = dsize
 
-        src_pts = np.float32([[0, SKYLINE], [width, SKYLINE], [
-                             0, height], [width, height]])
-        dst_pts = np.float32([[0, 0], [dst_width, 0], [
-                             dst_width*shrink_ratio, dst_height], [dst_width*(1-shrink_ratio), dst_height]])
+        src_pts = np.float32([[0, SKYLINE], [width, SKYLINE], [0, height], [width, height]])
+        dst_pts = np.float32([[0, 0], [dst_width, 0], [dst_width*shrink_ratio, dst_height], [dst_width*(1-shrink_ratio), dst_height]])
         M = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
         dst = cv2.warpPerspective(roi, M, dsize)
@@ -193,67 +189,65 @@ class Lane_Detect:
         line = np.polyfit(ys, xs, 1)
         return line, xs, ys
 
-    def callback(self, ros_data):
-        self.speed.publish(20) # publish speed 20
-        if self.ST:
-            self.counter += 1
-            if self.counter % 2 == 0: # reduce half of images for processing
-                self.counter = 0
-                return
+    def pipeline(self,img):
 
-        # decode image
-        np_arr=np.fromstring(ros_data.data, np.uint8)
-        img=cv2.imdecode(np_arr, cv2.IMREAD_COLOR)  # OpenCV >= 3.0
-
-        roi=img.copy()
-
-        height, width=roi.shape[:2]
-        cv2.rectangle(roi, (0, 0), (width, int(height*0.55)),0, -1)  # crop the image
-
-        hls=cv2.cvtColor(roi, cv2.COLOR_BGR2HLS)
-        l_channel=hls[:, :, 1]
+        hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
+        l_channel = hls[:, :, 1]
 
         # Sobel both x and y directions of lightness channel
-        sobel=cv2.Sobel(l_channel, cv2.CV_64F, 1, 1)
-        # sobel = cv2.Laplacian(l_channel,cv2.CV_64F)
-        abs_sobel=np.abs(sobel)  # absolute all negative gradient values
+        sobel = cv2.Sobel(l_channel, cv2.CV_64F, 1, 1)
+        abs_sobel = np.abs(sobel)  # absolute all negative gradient values
 
-        l_ret, l_thresh=cv2.threshold(abs_sobel, 75, 255, cv2.THRESH_BINARY)
+        l_ret, l_thresh = cv2.threshold(abs_sobel, 75, 255, cv2.THRESH_BINARY)
 
-        ratio=0.3  # shrink the bottom by 30%
-        bird_view=self.get_bird_view(l_thresh, ratio)
+        ratio = 0.3  # shrink the bottom by 30%
+        bird_view = self.get_bird_view(l_thresh, ratio)
 
-        s_window, (left_fitx, right_fitx), (left_fit_,right_fit_), ploty=self.sliding_window(bird_view)
+        s_window, (left_fitx, right_fitx), (left_fit_,right_fit_), ploty = self.sliding_window(bird_view)
 
-        d_line, d_xs, d_ys=self.get_desired_line(left_fitx, right_fitx, ploty)
+        d_line, d_xs, d_ys = self.get_desired_line(left_fitx, right_fitx, ploty)
 
-        if self.ST:
-            foo_img = np.zeros_like(s_window,dtype=np.uint8)
-            cv2.line(foo_img,(240,0),(240,320),color=(0,0,255),thickness=1)
-            cv2.line(foo_img,(int(d_xs[0]),0),(int(d_xs[len(d_xs)-1]),320),color=(0,255,0),thickness=1)
+        lines_plot_img = np.zeros_like(s_window, dtype=np.uint8)
+        cv2.line(lines_plot_img, (240, 0), (240, 320), color=(0, 0, 255), thickness=1)
+        cv2.line(lines_plot_img, (int(d_xs[0]), 0), (int(d_xs[len(d_xs)-1]), 320), color=(0, 255, 0), thickness=1)
 
-            draw_lane=self.draw_lines(img, bird_view.shape[:2], left_fitx, right_fitx, ploty)
+        draw_lane = self.draw_lines(img, bird_view.shape[:2], left_fitx, right_fitx, ploty)
 
-            cv2.imshow('frame', img)
-            cv2.imshow('sliding windows', s_window)
-            cv2.imshow('lines',foo_img)
-            cv2.imshow('draw_lane', draw_lane)
+        cv2.imshow('frame', img)
+        cv2.imshow('sliding windows', s_window)
+        cv2.imshow('lines', lines_plot_img)
+        cv2.imshow('draw_lane', draw_lane)
 
-        # ask me for explanation
         top_delta = 240 - d_xs[0]
         bot_delta = 240 - d_xs[len(d_xs) - 1]
 
-        # print('top_delta: {}, bot_delta: {}'.format(top_delta,bot_delta))
-        steer_delta = - (top_delta - bot_delta) /4 
-        print('steer_delta: ', steer_delta)
+        steer_delta = - (top_delta - bot_delta) / 4
+        print('steer_delta:', steer_delta)
         self.steer_angle.publish(steer_delta)
-        
+        self.speed_pub.publish(35)
+
         cv2.waitKey(2)
 
+    def callback(self, ros_data):
+
+        self.counter += 1
+        if self.counter % 2 == 0:  # reduce half of images for processing
+            self.counter = 0
+            return
+
+        # decode image
+        np_arr = np.fromstring(ros_data.data, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)  # OpenCV >= 3.0
+
+        self.pipeline(img)
+
+def shutdown_hook():
+    print('Shutting down ROS lane detection module')
 
 def main(args):
-    lane_detect=Lane_Detect()
+    lane_detect = Lane_Detect()
     rospy.init_node('team_614_lane_detect', anonymous=True)
+    rospy.on_shutdown(shutdown_hook)
     try:
         rospy.spin()
     except KeyboardInterrupt:

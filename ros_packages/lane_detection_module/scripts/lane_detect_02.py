@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# shebang (#!)
 from __future__ import print_function
 import sys
 import time
@@ -22,25 +21,40 @@ class Lane_Detect:
         self.CODE = 'Team1' if self.ST else 'Team614'
         self.NAME = 'Stardust'
 
-        self.log = False
-
-        self.counter = 0 # counter for reducing the number of processed image
+        self.counter = 0  # counter for reducing the number of processed image
         # x = ay + b
         self.left_a, self.left_b = [], []
         self.right_a, self.right_b = [], []
 
         self.subscriber = rospy.Subscriber("/{}_image/compressed".format(self.CODE), CompressedImage, self.callback, queue_size=1)
-
-        if self.log: # write log for runtime optimization
-            self.f = open('log_02.txt','w+')
-            self.f.write('start_time,\tpre_process,\tbird_view,\tsliding_windows,\tdraw_lane,\trun_time\n')
-
-        self.steer_angle = rospy.Publisher('{}_steerAngle'.format(self.CODE),Float32,queue_size=10)
-        self.speed = rospy.Publisher('{}_speed'.format(self.CODE),Float32,queue_size=10)
+        self.steer_angle = rospy.Publisher('{}_steerAngle'.format(self.CODE), Float32, queue_size=1)
+        self.speed_pub = rospy.Publisher('{}_speed'.format(self.CODE), Float32, queue_size=1)
 
     def get_hist(self, img):
         hist = np.sum(img, axis=0)
         return hist
+
+    
+    def binary_HSV(self, img):
+        minThreshold = (0, 0, 180)
+        maxThreshold = (179, 30, 255)
+        hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        out = cv2.inRange(hsv_img, minThreshold, maxThreshold)
+        return out
+
+    def shadow_HSV(self, img):
+        minShadowTh = (30, 43, 36)
+        maxShadowTh = (120, 81, 171)
+
+        minLaneInShadow = (90, 43, 97)
+        maxLaneInShadow = (120, 80, 171)
+
+        imgHSV = cv2.cvtColor(img,cv2.COLOR_BGR2HSV)
+        shadowMaskTh = cv2.inRange(imgHSV,minShadowTh,maxShadowTh)
+        shadow = cv2.bitwise_and(img, img, mask=shadowMaskTh)
+        shadowHSV = cv2.cvtColor(shadow, cv2.COLOR_BGR2HSV)
+        out = cv2.inRange(shadowHSV, minLaneInShadow, maxLaneInShadow)
+        return out
 
     def get_bird_view(self, img, shrink_ratio, dsize=(480, 320)):
         height, width = img.shape[:2]
@@ -51,10 +65,8 @@ class Lane_Detect:
 
         dst_width, dst_height = dsize
 
-        src_pts = np.float32([[0, SKYLINE], [width, SKYLINE], [
-                             0, height], [width, height]])
-        dst_pts = np.float32([[0, 0], [dst_width, 0], [
-                             dst_width*shrink_ratio, dst_height], [dst_width*(1-shrink_ratio), dst_height]])
+        src_pts = np.float32([[0, SKYLINE], [width, SKYLINE], [0, height], [width, height]])
+        dst_pts = np.float32([[0, 0], [dst_width, 0], [dst_width*shrink_ratio, dst_height], [dst_width*(1-shrink_ratio), dst_height]])
         M = cv2.getPerspectiveTransform(src_pts, dst_pts)
 
         dst = cv2.warpPerspective(roi, M, dsize)
@@ -199,101 +211,59 @@ class Lane_Detect:
         line = np.polyfit(ys, xs, 1)
         return line, xs, ys
 
-    def callback(self, ros_data):
-        if self.ST:
-            self.counter += 1
-            if self.counter % 2 == 0: # reduce half of images for processing
-                self.counter = 0
-                return
+    def pipeline(self,img):
+        ratio = 0.3  # shrink the bottom by 30%
+        bird_view = self.get_bird_view(img, ratio)
 
-        delta_list = [] # hold runtime of diferent blocks
-        if self.ST:
-            timer1 = time.time()
-            # print('[{}] RECEIVED IMAGE'.format(timer1, end=' '))
-            delta_list.append(timer1)
+        none_shadow_mask = self.binary_HSV(bird_view)
+        shadow_mask = self.shadow_HSV(bird_view)
+        lane_mask = cv2.bitwise_or(none_shadow_mask,shadow_mask)
 
-        # decode image
-        np_arr=np.fromstring(ros_data.data, np.uint8)
-        img=cv2.imdecode(np_arr, cv2.IMREAD_COLOR)  # OpenCV >= 3.0
+        s_window, (left_fitx, right_fitx), (left_fit_,right_fit_), ploty = self.sliding_window(lane_mask)
 
-        roi=img.copy()
+        d_line, d_xs, d_ys = self.get_desired_line(left_fitx, right_fitx, ploty)
 
-        height, width=roi.shape[:2]
-        cv2.rectangle(roi, (0, 0), (width, int(height*0.55)),0, -1)  # crop the image
+        lines_plot_img = np.zeros_like(s_window, dtype=np.uint8)
+        cv2.line(lines_plot_img, (240, 0), (240, 320), color=(0, 0, 255), thickness=1)
+        cv2.line(lines_plot_img, (int(d_xs[0]), 0), (int(d_xs[len(d_xs)-1]), 320), color=(0, 255, 0), thickness=1)
 
-        hls=cv2.cvtColor(roi, cv2.COLOR_BGR2HLS)
-        h_channel=hls[:, :, 0]
-        l_channel=hls[:, :, 1]
-        s_channel=hls[:, :, 2]
+        draw_lane = self.draw_lines(img, bird_view.shape[:2], left_fitx, right_fitx, ploty)
 
-        # Sobel both x and y directions of lightness channel
-        sobel=cv2.Sobel(l_channel, cv2.CV_64F, 1, 1)
-        # sobel = cv2.Laplacian(l_channel,cv2.CV_64F)
-        abs_sobel=np.abs(sobel)  # absolute all negative gradient values
+        cv2.imshow('frame', img)
+        cv2.imshow('sliding windows', s_window)
+        cv2.imshow('lines', lines_plot_img)
+        cv2.imshow('draw_lane', draw_lane)
 
-        l_ret, l_thresh=cv2.threshold(abs_sobel, 75, 255, cv2.THRESH_BINARY)
-
-        if self.ST:
-            pre_process_delta = time.time() - sum(delta_list)
-            delta_list.append(pre_process_delta)
-
-        ratio=0.3  # shrink the bottom by 30%
-        bird_view=self.get_bird_view(l_thresh, ratio)
-
-        if self.ST:
-            bird_view_delta = time.time() - sum(delta_list)
-            delta_list.append(bird_view_delta)
-
-        s_window, (left_fitx, right_fitx), (left_fit_,
-                                            right_fit_), ploty=self.sliding_window(bird_view)
-
-        if self.ST:
-            slide_delta = time.time() - sum(delta_list)
-            delta_list.append(slide_delta)
-
-        if self.ST:
-            draw_lane=self.draw_lines(img, bird_view.shape[:2], left_fitx, right_fitx, ploty)
-
-            draw_lane_delta = time.time() - sum(delta_list)
-            delta_list.append(draw_lane_delta)
-
-            label='{}% threshed lightness sky view'.format(int(ratio*100))
-
-            cv2.imshow('frame', img)
-            cv2.imshow(label, bird_view)
-            cv2.imshow('sliding windows', s_window)
-            cv2.imshow('draw_lane', draw_lane)
-
-
-        d_line, d_xs, d_ys=self.get_desired_line(left_fitx, right_fitx, ploty)
-
-        # take a look a jupyter notebook for explanation
         top_delta = 240 - d_xs[0]
         bot_delta = 240 - d_xs[len(d_xs) - 1]
 
-        # print('top_delta: {}, bot_delta: {}'.format(top_delta,bot_delta))
-        steer_delta = - (top_delta - bot_delta) / 10
-        print('steer_delta: ', steer_delta)
+        steer_delta = - (top_delta - bot_delta) / 4
+        print('steer_delta:', steer_delta)
         self.steer_angle.publish(steer_delta)
-        
-        if self.ST:
-            get_line_delta = time.time() - sum(delta_list)
-            delta_list.append(get_line_delta)
-
-        if self.ST:
-            timer2=time.time()
-            delta = timer2 - timer1
-
-            if self.log:
-                self.f.write('{},\t{},\t{},\t{},\t{},\t{}\n'.format(delta_list[0],delta_list[1],delta_list[2],delta_list[3],delta_list[4],timer2))
-            # print('callback takes {} sec'.format(delta))
+        self.speed_pub.publish(30)
 
         cv2.waitKey(2)
 
+    def callback(self, ros_data):
+
+        self.counter += 1
+        if self.counter % 2 == 0:  # reduce half of images for processing
+            self.counter = 0
+            return
+
+        # decode image
+        np_arr = np.fromstring(ros_data.data, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)  # OpenCV >= 3.0
+
+        self.pipeline(img)
+
+def shutdown_hook():
+    print('Shutting down ROS lane detection module')
 
 def main(args):
-    lane_detect=Lane_Detect()
+    lane_detect = Lane_Detect()
     rospy.init_node('team_614_lane_detect', anonymous=True)
+    rospy.on_shutdown(shutdown_hook)
     try:
         rospy.spin()
     except KeyboardInterrupt:
