@@ -8,5 +8,5 @@
 - [x] Overlay Detected Lane
 
 ## PID for control
-- [ ] Research
-- [ ] Code
+- [x] Research
+- [x] Code
