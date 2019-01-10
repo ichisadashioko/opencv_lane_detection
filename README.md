@@ -7,6 +7,6 @@
 - [x] Curve Fitting
 - [x] Overlay Detected Lane
 
-## PID for control
+## [PID for control](https://medium.com/intro-to-artificial-intelligence/pid-controller-udacitys-self-driving-car-nanodegree-c4fd15bdc981)
 - [x] Research
 - [x] Code
